@@ -12,6 +12,8 @@ from dotenv import load_dotenv
 import subprocess
 from typing import Tuple
 import webbrowser
+from time import sleep
+import argparse
 
 VIAM_PATH = "~/.viam/capture"
 
@@ -89,7 +91,7 @@ def get_org_id_from_cli(org_name:str, orglist:str) -> str:
     for line in lines:
         name = line.split('(')[0][1:].replace(' ','').lower()
         if name == org_name_cleaned:
-            return line.replace('/t', '').replace('/', ' ').split('(')[1][4:-1]
+            return line.replace('/t', '').replace('/', ' ').split('(')[1][4:-1].replace(')', '')
     raise ValueError('Could not find org matching name')
    
 def get_apikey_and_id_from_cli(input: str) -> Tuple[str, str]:
@@ -103,15 +105,23 @@ def generate_api_key(org_name:str) -> Tuple[str, str]:
     org_id = get_org_id_from_cli(org_name, output)
     api_key_raw = subprocess.getoutput(f"viam organizations api-key create --org-id {org_id}")
     return get_apikey_and_id_from_cli(api_key_raw)
+
+def validate_url(url: str) -> str:
+    if 'https://' not in url:
+        return f'https://{url}'
+    return url
             
-
-
 async def main():
-    load_dotenv()
-    url = os.getenv('URL')
-    org_name = os.getenv('ORG_NAME')
+    parser = argparse.ArgumentParser(description='Big Data Macro')
+    parser.add_argument('url', type=str, help='viam url')
+    parser.add_argument('org', type=str, help='org to add robot to')
+    args = parser.parse_args()
+    url = validate_url(args.url[4:])
+    org_name = args.org[4:]
+    print(url)
+    print(org_name)
+    
     is_staging = '.com' not in url
-    print(is_staging)
     log_in_cli(is_staging)
     api_key_id, api_key = generate_api_key(org_name)
 
@@ -135,11 +145,12 @@ async def main():
     filepath = generate_viam_json(
         secert_id=robot_part.id, secert=secret, url=url, robot_name=machine_name
     )
-    start_robot(filepath)
     webbrowser.open(f"{url}/robot?id={robot_id}&tab=config", new = 2, autoraise = True)
-    # clean up
+    # 
+    if is_staging:
+        sleep(3)
+    start_robot(filepath)
     viam_client.close()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
