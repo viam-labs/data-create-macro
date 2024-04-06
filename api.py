@@ -1,19 +1,19 @@
 import asyncio
 import random
 from viam.app.viam_client import ViamClient, AppClient
-from viam.rpc.dial import Credentials, DialOptions
+from viam.rpc.dial import DialOptions
 from random_word import RandomWords
-from viam.app.app_client import RobotPart
 from viam.proto.app import SharedSecret
 import json
 import os
 from applescript import tell
-from dotenv import load_dotenv
 import subprocess
 from typing import Tuple
 import webbrowser
 from time import sleep
 import argparse
+import requests
+from threading import Thread
 
 VIAM_PATH = "~/.viam/capture"
 
@@ -80,7 +80,9 @@ def generate_viam_json(secert_id: str, secert: str, url: str, robot_name: str):
 
 
 def start_robot(filepath: str):
-    tell.app("Terminal", 'do script "' + f"viam-server -config {filepath}" + '"')
+    command = f"viam-server -config {filepath}"
+    print(f"Command to start robot: \n{command}\n")
+    tell.app("Terminal", 'do script "' + command + '"')
 
 def log_in_cli(is_staging:bool):
     login_command = f"viam --base-url '{'app.viam.dev' if is_staging else 'app.viam.com'}' login"
@@ -120,21 +122,36 @@ def validate_url(url: str) -> str:
     if 'https://' not in url:
         return f'https://{url}'
     return url
+
+def ping_temp_env(url: str) -> Thread:
+    thread = Thread(target = ping_temp_env_helper, args = (url,))
+    thread.start()
+    return thread
+
+def ping_temp_env_helper(url: str):
+    requests.get(url)
+    sleep(7)
+
             
 async def main():
     parser = argparse.ArgumentParser(description='Big Data Macro')
-    parser.add_argument('url', type=str, help='viam url')
-    parser.add_argument('org', type=str, help='org to add robot to')
+    parser.add_argument('-url', type=str, help='viam url', required=True)
+    parser.add_argument('-org', type=str, help='org to add robot to', required=True)
     parser.add_argument('-l', '--location_id', type=str, help='location id')
     parser.add_argument('-m', '--machine_name', type=str, help='robot name')
 
     args = parser.parse_args()
-    url = validate_url(args.url[4:])
-    org_name = args.org[4:]
+    url = validate_url(args.url)
+    org_name = args.org
     location_id = args.location_id
     machine_name = args.machine_name
     
     is_staging = '.com' not in url
+    is_temp_env = 'appmain' in url
+    ping_thread = None
+    if is_temp_env:
+        ping_thread = ping_temp_env(url)
+                
     log_in_cli(is_staging)
     api_key_id, api_key = generate_api_key(org_name)
 
@@ -146,7 +163,7 @@ async def main():
     else:
         # This is slow
         location_name = await get_location_name(fleet, location_id)
-    print(f"Adding robot to location {location_name}")
+    print(f"Adding robot to location: {location_name}")
 
     if not machine_name:
         machine_name = generate_machine_name()
@@ -164,12 +181,12 @@ async def main():
     filepath = generate_viam_json(robot_part.id, secret, url, robot_name=machine_name)
     
     webbrowser.open(f"{url}/robot?id={robot_id}&tab=config", new = 2, autoraise = True)
-    # Delay on staging since it might take some time for pr envs to be ready to serve robot traffic
-    # TODO make this only on pr branch, not just all staging
-    if is_staging:
-        sleep(3)
-    start_robot(filepath)
     viam_client.close()
+
+    # Delay on temp envs since it might take some time for them to be ready to serve robot traffic
+    if is_temp_env and ping_thread:
+        ping_thread.join()
+    start_robot(filepath)
 
 if __name__ == "__main__":
     asyncio.run(main())
