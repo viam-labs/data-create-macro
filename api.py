@@ -31,9 +31,18 @@ async def connect(api_key_id:str, api_key:str, is_staging:bool) -> ViamClient:
 
 
 # if needed, pick a random location from all in the org
-async def pick_location_id(fleet: AppClient) -> str:
+async def pick_location_id(fleet: AppClient) -> Tuple[str, str]:
     locations = await fleet.list_locations()
-    return random.choice(locations).id
+    selected_location = random.choice(locations)
+    return (selected_location.id, selected_location.name)
+
+async def get_location_name(fleet: AppClient, location_id) -> str:
+    locations = await fleet.list_locations()
+    for location in locations:
+        if location.id == location_id:
+            return location.name
+    raise ValueError(f'Could not find location matching id {location_id}')
+
 
 
 def generate_machine_name() -> str:
@@ -66,7 +75,7 @@ def generate_viam_json(secert_id: str, secert: str, url: str, robot_name: str):
     os.makedirs(os.path.dirname(filename), exist_ok=True)
     with open(filename, "w") as f:
         f.write(json.dumps(config))
-        print(os.path.abspath(filename))
+        print(f"Config written to: {os.path.abspath(filename)}")
         return os.path.abspath(filename)
 
 
@@ -92,7 +101,7 @@ def get_org_id_from_cli(org_name:str, orglist:str) -> str:
         name = line.split('(')[0][1:].replace(' ','').lower()
         if name == org_name_cleaned:
             return line.replace('/t', '').replace('/', ' ').split('(')[1][4:-1].replace(')', '')
-    raise ValueError('Could not find org matching name')
+    raise ValueError(f'Could not find org matching name {org_name}')
    
 def get_apikey_and_id_from_cli(input: str) -> Tuple[str, str]:
     lines = input.splitlines()
@@ -106,6 +115,7 @@ def generate_api_key(org_name:str) -> Tuple[str, str]:
     api_key_raw = subprocess.getoutput(f"viam organizations api-key create --org-id {org_id}")
     return get_apikey_and_id_from_cli(api_key_raw)
 
+# Add http to url if not provided
 def validate_url(url: str) -> str:
     if 'https://' not in url:
         return f'https://{url}'
@@ -115,11 +125,14 @@ async def main():
     parser = argparse.ArgumentParser(description='Big Data Macro')
     parser.add_argument('url', type=str, help='viam url')
     parser.add_argument('org', type=str, help='org to add robot to')
+    parser.add_argument('-l', '--location_id', type=str, help='location id')
+    parser.add_argument('-m', '--machine_name', type=str, help='robot name')
+
     args = parser.parse_args()
     url = validate_url(args.url[4:])
     org_name = args.org[4:]
-    print(url)
-    print(org_name)
+    location_id = args.location_id
+    machine_name = args.machine_name
     
     is_staging = '.com' not in url
     log_in_cli(is_staging)
@@ -127,26 +140,32 @@ async def main():
 
     viam_client = await connect(f'{api_key_id.strip()}', api_key, is_staging)
     fleet = viam_client.app_client
-    location_id = await pick_location_id(fleet)
+    location_name = ''
+    if not location_id:
+        location_id, location_name = await pick_location_id(fleet)
+    else:
+        # This is slow
+        location_name = await get_location_name(fleet, location_id)
+    print(f"Adding robot to location {location_name}")
 
-    machine_name = generate_machine_name()
-    print(machine_name)
+    if not machine_name:
+        machine_name = generate_machine_name()
+    print(f"Generated machine name: {machine_name}")
     robot_id = await fleet.new_robot(name=machine_name, location_id=location_id)
 
     robot_parts = await fleet.get_robot_parts(robot_id=robot_id)
     robot_part = robot_parts[0]
     secret = robot_part.secret
     
-
     # create config with data and update robot part
-    config = generate_robot_config(robot_id=robot_id)
+    config = generate_robot_config(robot_id)
     await fleet.update_robot_part(robot_part.id, robot_part.name, config)
     # generate viam-{robot}-main.json to run on terminal
-    filepath = generate_viam_json(
-        secert_id=robot_part.id, secert=secret, url=url, robot_name=machine_name
-    )
+    filepath = generate_viam_json(robot_part.id, secret, url, robot_name=machine_name)
+    
     webbrowser.open(f"{url}/robot?id={robot_id}&tab=config", new = 2, autoraise = True)
-    # 
+    # Delay on staging since it might take some time for pr envs to be ready to serve robot traffic
+    # TODO make this only on pr branch, not just all staging
     if is_staging:
         sleep(3)
     start_robot(filepath)
