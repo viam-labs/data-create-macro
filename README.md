@@ -5,7 +5,7 @@ Run `./setup.sh`
 ### Usage
 `source .venv/bin/activate` (You must activate the venv where all requirements are installed)
 
-`python3 api.py url=app.viam.com org="vijays slam org"` 
+`python3 api.py -url=app.viam.com -org="vijays slam org" -l=abc123 -m=skynet` 
 
 org is case insensitive. 
 
