@@ -172,7 +172,7 @@ async def main():
     parser.add_argument("-l", "--location_id", type=str, help="location id")
     parser.add_argument("-m", "--machine_name", type=str, help="robot name")
     parser.add_argument(
-        "-f", "--frequency", type=int, help="capture frequency", default=1
+        "-f", "--frequency", type=float, help="capture frequency", default=1.0
     )
     parser.add_argument(
         "-b", "--binary_count", type=int, help="number of binary sources", default=1
